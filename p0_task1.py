@@ -3,6 +3,7 @@ import torch
 import torchvision
 import torch.multiprocessing as mp
 import numpy as np
+import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -36,11 +37,10 @@ def main():
     args = parser.parse_args()
     args.world_size = args.num_proc * args.nodes
     print(args)
-    print( os.getpid())
+
     # Task 2: Assign IP address and port for master process, i.e. process with rank=0
-    os.environ['MASTER_ADDR'] = '10.10.1.1'
-    os.environ['MASTER_PORT'] = '9997'
-    os.environ['GLOO_SOCKET_IFNAME'] = 'eno1d1'
+    #os.environ['MASTER_ADDR'] = ''
+    #os.environ['MASTER_PORT'] = ''
 
     # Spawns one or many processes untied to the first Python process that runs on the file.
     # This is to get around Python's GIL that prevents parallelism within independent threads.
@@ -62,13 +62,12 @@ def load_datasets(batch_size, world_size, rank):
   # 1. Generate a DistributedSample instance with num_replicas = world_size
   #    and rank=rank.
   # 2. Set train_loader's sampler to the distributed sampler
-  sampler = torch.utils.data.distributed.DistributedSampler(dataset, num_replicas = world_size, rank=rank)
+
   train_loader = torch.utils.data.DataLoader(dataset=dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              num_workers=0,
-                                             pin_memory=True,
-					     sampler=sampler)
+                                             pin_memory=True)
   val_loader = DataLoader(val_ds, batch_size*2, num_workers=4, pin_memory=True)
 
   return train_loader, val_loader
@@ -118,7 +117,7 @@ def create_model():
 
   # Task 2: Wrap the model in DistributedDataParallel to
   # make the model train in a distributed fashion.
-  model = torch.nn.parallel.DistributedDataParallel(model)
+
   # Printing sizes of model parameters
   for t in model.parameters():
       print(t.shape)
@@ -154,14 +153,19 @@ def run_epochs(epochs, lr, model, train_loader, val_loader, rank, opt_func=torch
         for batch in train_loader:
             images, labels = batch
             # Task 1: Complete training loop
+
             # Step 1 Get model prediction, i.e. run the fwd pass
             logits = model(images)
+
             # Step 2 Calculate cross entropy loss between out and labels
-            cost = F.cross_entropy(logits, labels)
+            loss = F.cross_entropy(logits, labels)
+
             # Step 3 Reset the gradients to zero
             optimizer.zero_grad()
+
             # Step 4 Run the backward pass
-            cost.backward()
+            loss.backward()
+            
             # Step 5 Apply gradients using optimizer
             optimizer.step()
         # Validation phase
@@ -182,8 +186,6 @@ def train(proc_num, args):
     #  init_method = 'env://'
     #  world_size = args.world_size
     #  rank = rank
-    dist.init_process_group(backend = 'gloo', init_method='env://',
-                        rank=rank, world_size=args.world_size)
 
     model = create_model()
     train_loader, val_loader = load_datasets(batch_size=args.batch_size, world_size=args.world_size, rank=rank)
